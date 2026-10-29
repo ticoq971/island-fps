@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Île Sauvage</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="menu">
+  <div class="card">
+    <h1>🏝️ Île Sauvage</h1>
+    <p class="sub">FPS / survie multijoueur à 2 (ou plus) — directement dans le navigateur</p>
+    <label>Pseudo <input id="name" maxlength="14" placeholder="Joueur"></label>
+    <div class="row">
+      <div class="col">
+        <h3>Créer une partie</h3>
+        <select id="mode">
+          <option value="coop">Survie coopérative</option>
+          <option value="team">Équipe contre bots IA</option>
+          <option value="duel">Duel 1v1 (premier à 5)</option>
+          <option value="treasure">1v1 : trouve le trésor en premier</option>
+        </select>
+        <button id="btn-solo">Jouer en solo (test)</button>
+        <button id="btn-host">Créer une partie à deux</button>
+      </div>
+      <div class="col">
+        <h3>Rejoindre un ami</h3>
+        <input id="code" maxlength="5" placeholder="CODE" style="text-transform:uppercase">
+        <button id="btn-join">Rejoindre</button>
+      </div>
+    </div>
+    <div id="status"></div>
+    <details>
+      <summary>Contrôles</summary>
+      <p>ZQSD/WASD : bouger · Espace : sauter · Maj : courir · Souris : viser · Clic gauche : frapper / tirer / poser<br>
+      1–9 : choisir l'objet · Tab ou I : inventaire + craft · B : mode construction (1-4 pièce, R matériau)<br>
+      E : interagir (buggy, coffre) · F : manger de la viande · Échap : libérer la souris</p>
+    </details>
+    <details>
+      <summary>Manette</summary>
+      <p>Appuie sur un bouton pour l'activer. Stick gauche : bouger · stick droit : viser · RT : frapper/tirer/poser · A : sauter · L3 : courir<br>
+      X : interagir · Y : manger · B : construire · LB/RB : changer d'objet · Start : inventaire/craft<br>
+      Construction : croix ←/→ pièce, ↑ matériau · Inventaire : croix ↑/↓ + A pour fabriquer, B pour fermer</p>
+    </details>
+    <p class="small">Ordinateur, clavier + souris ou manette.</p>
+  </div>
+</div>
+
+<div id="hud" class="hidden">
+  <div id="crosshair"></div>
+  <div id="hurt"></div>
+  <div id="water"></div>
+  <div id="info"></div>
+  <div id="score"></div>
+  <div id="banner"></div>
+  <div id="hint"></div>
+  <div id="buildinfo" class="hidden"></div>
+  <div id="bars"><div id="hp"><div id="hp-fill"></div><span id="hp-text">100</span></div><div id="res"></div></div>
+  <div id="hotbar"></div>
+  <div id="inv" class="hidden">
+    <div class="invcol"><h3>Inventaire</h3><div id="inv-res"></div><p class="small">Viande : touche F pour se soigner</p></div>
+    <div class="invcol"><h3>Craft</h3><div id="recipes"></div><p class="small">🔧 Les recettes marquées « établi » demandent d'être à moins de 6 m d'un établi.</p></div>
+  </div>
+  <div id="resume">Cliquer pour jouer</div>
+</div>
+
+<script type="module" src="js/game.js"></script>
+</body>
+</html>
