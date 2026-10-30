@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import {mergeGeometries} from 'three/addons/utils/BufferGeometryUtils.js';
+import {bark,leaves,frond,planks,stone,thatch,boxGeo} from './textures.js';
 
 export function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -43,13 +44,14 @@ export function biomeAt(x,z,s){
 function palmCrown(){
   const parts=[];
   for(let i=0;i<8;i++){
-    const P=[],I=[],S=5;
+    const P=[],U=[],I=[],S=5;
     for(let k=0;k<=S;k++){
-      const t=k/S,x=t*3.8,y=.9*t-2*t*t,w=.34*(1-.75*t)+.02;
+      const t=k/S,x=t*4.4,y=.9*t-2.2*t*t,w=.42*(1-.75*t)+.02;
       P.push(x,y,-w,x,y+.08,0,x,y,w); // palme légèrement pliée en V
+      U.push(0,t,.5,t,1,t);
       if(k){const a=(k-1)*3,b=k*3;I.push(a,b,a+1,a+1,b,b+1,a+1,b+1,a+2,a+2,b+1,b+2)}
     }
-    const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));g.setIndex(I);
+    const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));g.setAttribute('uv',new THREE.Float32BufferAttribute(U,2));g.setIndex(I);
     g.rotateZ(.15+((i*7)%3)*.08);g.rotateY(i*Math.PI/4+((i*37)%5)*.06);
     parts.push(g);
   }
@@ -62,14 +64,27 @@ function blobCrown(r){
 }
 // sapin en trois étages
 function pineCrown(){
-  return mergeGeometries([[1.7,3,-.6],[1.3,2.6,.9],[.85,2,2.2]].map(([r,h,y])=>new THREE.ConeGeometry(r,h,8).translate(0,y,0)));
+  return mergeGeometries([[2,3.4,-.6],[1.5,3,1.1],[.95,2.4,2.6]].map(([r,h,y])=>new THREE.ConeGeometry(r,h,8).translate(0,y,0)));
 }
+// fruits accrochés sous la couronne (oranges, mangues…) ou noix de coco au sommet d'un palmier
+function fruitGeo(n,r,rad,y0,y1,size){
+  const parts=[];
+  for(let i=0;i<n;i++){
+    const a=i*2.399+.3,f=((i*53)%17)/17,rr=rad*(.75+.25*Math.sin(i*1.7));
+    parts.push(new THREE.SphereGeometry(size,7,5).translate(Math.cos(a)*rr,y0+(y1-y0)*f,Math.sin(a)*rr));
+  }
+  return mergeGeometries(parts);
+}
+// arbres hauts : le tronc nu monte au-dessus de la tête, on marche sous la canopée
 const STY={
-  palm:{trunk:[.13,.24,5.4,7],tc:0x8a7350,tY:2.7,crown:palmCrown,cc:0x4fa23e,cY:5.3,ds:true},
-  giant:{trunk:[1.1,1.9,9,8],tc:0x5a4630,tY:4.5,crown:()=>blobCrown(5.5),cc:0x2b7a30,cY:16,sy:.6},
-  oak:{trunk:[.22,.34,3,6],tc:0x6b4a2b,tY:1.5,crown:()=>blobCrown(1.7),cc:0x2f7d32,cY:4.3},
-  pine:{trunk:[.18,.3,3,6],tc:0x5b4026,tY:1.5,crown:pineCrown,cc:0x1f5a2d,cY:4},
-  spine:{trunk:[.18,.3,3,6],tc:0x5b4026,tY:1.5,crown:pineCrown,cc:0xdde8ee,cY:4},
+  palm:{trunk:[.14,.26,7.6,7],tc:0x9a8462,tY:3.8,crown:palmCrown,cc:0x4fa23e,cY:7.5,ds:true,leaf:'frond',
+    fr:()=>fruitGeo(5,.3,.32,7.05,7.3,.2),frc:[0x5d5326,0x6e6a2c]},
+  giant:{trunk:[1.1,1.9,13,8],tc:0x5a4630,tY:6.5,crown:()=>blobCrown(6.5),cc:0x2b7a30,cY:25,sy:.6},
+  oak:{trunk:[.24,.4,6.5,7],tc:0x8f6e4c,tY:3.25,crown:()=>blobCrown(2.6),cc:0x2f7d32,cY:8.2},
+  fruit:{trunk:[.17,.28,3.6,7],tc:0x8c6a4a,tY:1.8,crown:()=>blobCrown(2.1),cc:0x3d8f35,cY:5.4,
+    fr:()=>fruitGeo(16,2,2,4.1,5.2,.17),frc:[0xff8c1a,0xe8361f,0xf2c52a]},
+  pine:{trunk:[.2,.34,6,7],tc:0x5b4026,tY:3,crown:pineCrown,cc:0x1f5a2d,cY:7.2},
+  spine:{trunk:[.2,.34,6,7],tc:0x5b4026,tY:3,crown:pineCrown,cc:0xdde8ee,cY:7.2},
   dead:{trunk:[.12,.28,4.5,5],tc:0x4a4338,tY:2.2,crown:()=>new THREE.IcosahedronGeometry(.7,0),cc:0x4d5a2e,cY:4},
   cactus:{trunk:[.28,.3,2.6,7],tc:0x3d8a4a,tY:1.3,crown:()=>new THREE.SphereGeometry(.34,6,5),cc:0x3d8a4a,cY:2.6},
   rock:{trunk:null,crown:()=>new THREE.IcosahedronGeometry(1,0),cc:0x8a8a8a,cY:.5,sy:.75},
@@ -347,8 +362,11 @@ void main(){
   }
 
   // ---- boîtes de collision / structures
+  // matériaux texturés partagés : pierre pour les teintes grises, planches pour tout le reste
+  const STONEY=new Set([0x8e8e8e,0x7f7262]),boxMats=new Map();
+  const boxMat=color=>{let m=boxMats.get(color);if(!m)boxMats.set(color,m=new THREE.MeshLambertMaterial({color,map:STONEY.has(color)?stone():planks()}));return m};
   function addBox(x,y,z,w,h,d,color,walk){
-    const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshLambertMaterial({color}));
+    const m=new THREE.Mesh(boxGeo(w,h,d),boxMat(color));
     m.position.set(x,y,z);m.castShadow=m.receiveShadow=true;W.struct.add(m);
     W.boxes.push({minx:x-w/2,maxx:x+w/2,miny:y-h/2,maxy:y+h/2,minz:z-d/2,maxz:z+d/2,walk});
   }
@@ -366,7 +384,7 @@ void main(){
   const flat=(x,z,r)=>{let lo=1e9,hi=-1e9;for(const[i,j]of[[-r,-r],[r,-r],[-r,r],[r,r],[0,0]]){const h=hAt(x+i,z+j);lo=Math.min(lo,h);hi=Math.max(hi,h)}return{lo,hi}};
   const coastNear=(x,z)=>{for(let a=0;a<8;a++){const an=a*Math.PI/4;if(hAt(x+Math.cos(an)*22,z+Math.sin(an)*22)<.2)return true}return false};
   const free=(x,z,d)=>placed.every(p=>Math.hypot(p.x-x,p.z-z)>d)&&!caveList.some(q=>Math.hypot(q.x-x,q.z-z)<24)&&!inClear(x,z);
-  const roofMat=new THREE.MeshLambertMaterial({color:THATCH});
+  const roofMat=new THREE.MeshLambertMaterial({color:THATCH,map:thatch()});
   function hut(cx,cz){
     const y=flat(cx,cz,2.6).hi+.15;
     addBox(cx,y-1.5,cz,4.6,3,4.6,WOOD2,true);
@@ -403,7 +421,7 @@ void main(){
       placed.push({x,z});clearR.push({x,z,r:6});return;
     }
   }
-  const rockMat=new THREE.MeshLambertMaterial({color:0xb3a690,emissive:0x2a241c,flatShading:true}),mossMat=new THREE.MeshLambertMaterial({color:0x3d7a32,flatShading:true});
+  const rockMat=new THREE.MeshLambertMaterial({color:0xc4b7a0,emissive:0x2a241c,flatShading:true,map:stone()}),mossMat=new THREE.MeshLambertMaterial({color:0x3d7a32,flatShading:true,map:leaves()});
   function rockCyl(rt,rb,hgt,x,y,z){
     const g=new THREE.CylinderGeometry(rt,rb,hgt,7,2),p=g.attributes.position;
     for(let i=0;i<p.count;i++){p.setX(i,p.getX(i)+(rng()-.5)*rb*.35);p.setZ(i,p.getZ(i)+(rng()-.5)*rb*.35)}
@@ -444,20 +462,22 @@ void main(){
     }
   }
 
-  const occ=new Set();let treeN=0;
+  // forêt praticable : au moins ~4,5 m entre deux troncs, pour se promener dans les bois sous la canopée
+  const occ=new Map(),SP=4.5;let treeN=0;
+  const tooClose=(x,z)=>{const cx=Math.floor(x/SP),cz=Math.floor(z/SP);for(let a=-1;a<=1;a++)for(let b=-1;b<=1;b++){const l=occ.get((cx+a)*10000+cz+b);if(l)for(const p of l)if((p.x-x)**2+(p.z-z)**2<SP*SP)return true}return false};
+  const occAdd=(x,z)=>{const k=Math.floor(x/SP)*10000+Math.floor(z/SP);let l=occ.get(k);if(!l)occ.set(k,l=[]);l.push({x,z})};
   const PT={forest:.75,snow:.7,swamp:.3,desert:.12,rock:.3,beach:.25,water:0};
-  for(let a=0;a<34000&&treeN<3600;a++){
+  for(let a=0;a<34000&&treeN<2600;a++){
     const x=(rng()-.5)*380,z=(rng()-.5)*380;const h=hAt(x,z);
     if(h<.35)continue;
     const b=biomeAt(x,z,seed);
     if(rng()>PT[b])continue;
-    if(nearCave(x,z)||inClear(x,z))continue;
-    const k=Math.round(x/2.4)+','+Math.round(z/2.4);
-    if(occ.has(k))continue;occ.add(k);
-    // île tropicale : palmiers sur la côte, jungle de feuillus partout ailleurs, quelques conifères seulement près des sommets
+    if(nearCave(x,z)||inClear(x,z)||tooClose(x,z))continue;
+    occAdd(x,z);
+    // île tropicale : palmiers sur la côte, jungle de feuillus et arbres fruitiers, quelques conifères seulement près des sommets
     const r=rng();
-    const style=b==='desert'||b==='beach'?'palm':b==='swamp'?'dead':h<4?(r<.6?'palm':'oak'):h>14?(r<.3?'pine':'oak'):(r<.15?'palm':'oak');
-    addItem('tree',style,x,h,z,.8+rng()*.6,style==='palm'?.4:.55);treeN++;
+    const style=b==='desert'||b==='beach'?'palm':b==='swamp'?'dead':h<4?(r<.5?'palm':r<.62?'fruit':'oak'):h>14?(r<.3?'pine':'oak'):(r<.15?'palm':r<.28?'fruit':'oak');
+    addItem('tree',style,x,h,z,.85+rng()*.5,style==='palm'?.4:.5);treeN++;
   }
   for(let a=0,n=0;a<2500&&n<14;a++){ // arbres géants de la jungle
     const x=(rng()-.5)*300,z=(rng()-.5)*300,h=hAt(x,z);
@@ -465,7 +485,7 @@ void main(){
     addItem('tree','giant',x,h,z,1,2.2);clearR.push({x,z,r:5});n++;
   }
   const bushPos=[];
-  for(let a=0;a<9000&&bushPos.length<1800;a++){
+  for(let a=0;a<9000&&bushPos.length<1100;a++){
     const x=(rng()-.5)*380,z=(rng()-.5)*380,h=hAt(x,z);
     if(h<1||h>14||biomeAt(x,z,seed)!=='forest'||nearCave(x,z)||inClear(x,z))continue;
     bushPos.push({x,z,h,s:.6+rng()*.9});
@@ -508,20 +528,27 @@ void main(){
   // découpage en carrés de 50 m : seules les zones visibles (et proches pour les ombres) sont dessinées
   for(const[style,list]of Object.entries(groups)){
     const D=STY[style];
-    const tg=D.trunk?new THREE.CylinderGeometry(...D.trunk).translate(0,D.tY,0):null,tm=new THREE.MeshLambertMaterial();
-    const cg=D.crown().translate(0,D.cY,0),cm=new THREE.MeshLambertMaterial({side:D.ds?THREE.DoubleSide:THREE.FrontSide});
+    const isRock=it0=>it0.kind!=='tree';
+    const tg=D.trunk?new THREE.CylinderGeometry(...D.trunk).translate(0,D.tY,0):null,tm=new THREE.MeshLambertMaterial({map:bark()});
+    const cg=D.crown().translate(0,D.cY,0);
+    const cm=new THREE.MeshLambertMaterial({side:D.ds?THREE.DoubleSide:THREE.FrontSide,map:isRock(list[0])?stone():D.leaf==='frond'?frond():leaves(),flatShading:isRock(list[0])});
+    const fg=D.fr?D.fr():null,fm=fg?new THREE.MeshLambertMaterial():null;
     const chunks=new Map();
     for(const it of list){const k=Math.floor(it.x/50)+','+Math.floor(it.z/50);let c=chunks.get(k);if(!c)chunks.set(k,c=[]);c.push(it)}
     for(const sub of chunks.values()){
       const meshes=[];
       if(tg)meshes.push({m:new THREE.InstancedMesh(tg,tm,sub.length),c:D.tc,y:1});
       meshes.push({m:new THREE.InstancedMesh(cg,cm,sub.length),c:D.cc,y:D.sy||1});
+      if(fg)meshes.push({m:new THREE.InstancedMesh(fg,fm,sub.length),c:D.frc,y:1,fruit:true});
       sub.forEach((it,i)=>{
-        const node={id:id++,kind:it.kind,x:it.x,y:it.y,z:it.z,r:it.r,hp:HP[it.kind],alive:true,parts:[]};
+        const node={id:id++,kind:it.kind,x:it.x,y:it.y,z:it.z,r:it.r,hp:HP[it.kind],alive:true,parts:[],fruit:fg?(style==='palm'?2:4):0};
         q.setFromAxisAngle(UP,it.rot);
         for(const M of meshes){
           v.set(it.x,it.y,it.z);sc.set(it.s,it.s*M.y,it.s);m4.compose(v,q,sc);
-          M.m.setMatrixAt(i,m4);col.set(M.c).multiplyScalar(.85+rng()*.3);M.m.setColorAt(i,col);
+          M.m.setMatrixAt(i,m4);
+          if(M.fruit){col.set(M.c[Math.floor(rng()*M.c.length)]);node.fruitPart={m:M.m,i}}
+          else col.set(M.c).multiplyScalar(.85+rng()*.3);
+          M.m.setColorAt(i,col);
           node.parts.push({m:M.m,i});
         }
         W.nodes.push(node);W.nodeMap.set(node.id,node);gridAdd(node);
@@ -542,6 +569,8 @@ void main(){
   }
   W.struct.traverse(o=>{if(o.isMesh)o.castShadow=o.receiveShadow=true});
   W.tick=dt=>{seaMat.uniforms.time.value+=dt;riverMat.uniforms.time.value+=dt};
+  // fruits cueillis : on cache la grappe de l'arbre (l'arbre reste)
+  W.hideFruit=nid=>{const n=W.nodeMap.get(nid);if(!n||!n.fruitPart)return;n.fruit=0;n.fruitPart.m.setMatrixAt(n.fruitPart.i,Z);n.fruitPart.m.instanceMatrix.needsUpdate=true};
   W.removeNode=nid=>{const n=W.nodeMap.get(nid);if(!n||!n.alive)return null;n.alive=false;for(const p of n.parts){p.m.setMatrixAt(p.i,Z);p.m.instanceMatrix.needsUpdate=true}return n};
   W.nearNodes=(x,z,rad,fn)=>{
     const x0=Math.floor((x-rad)/8),x1=Math.floor((x+rad)/8),z0=Math.floor((z-rad)/8),z1=Math.floor((z+rad)/8);

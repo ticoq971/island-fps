@@ -35,7 +35,7 @@ const RECIPES=[
   {id:'rifle',cost:{steel:6,iron:4}},
   {id:'buggy',name:'Buggy (2 places)',cost:{wood:15,iron:8,steel:2}},
 ];
-const RES_LABEL={wood:'Bois',stone:'Pierre',iron:'Fer',steel:'Acier',meat:'Viande'};
+const RES_LABEL={wood:'Bois',stone:'Pierre',iron:'Fer',steel:'Acier',meat:'Viande',fruit:'Fruits'};
 const PIECES={floor:['Sol',6],wall:['Mur',4],door:['Porte',4],roof:['Toit',5]};
 const PKEYS=['floor','wall','door','roof'];
 const MODES={
@@ -135,7 +135,7 @@ function setView(id){
 // ======================= ÉTAT =======================
 let world=null,net=null,mode='coop',running=false;
 const me={id:'',name:'Joueur',idx:0,pos:new THREE.Vector3(),vel:new THREE.Vector3(),yaw:0,pitch:0,hp:100,dead:false,deadT:0,
-  inv:{wood:0,stone:0,iron:0,steel:0,meat:0},tools:new Set(['fist']),slot:0,onGround:false,veh:null,
+  inv:{wood:0,stone:0,iron:0,steel:0,meat:0,fruit:0},tools:new Set(['fist']),slot:0,onGround:false,veh:null,
   build:false,bpiece:'wall',bmat:'wood',cd:0,att:0,lastHurt:0,lastAttacker:null,viewAnim:0,bob:0};
 const S={players:new Map(),animals:new Map(),bots:new Map(),vehicles:new Map(),scores:{},treasure:null,chest:null,round:0};
 const H={animals:new Map(),bots:new Map(),nid:1,next:0,respawn:[],removed:new Set(),snapT:0,restartAt:0,winner:false,botNext:0,scores:{}};
@@ -216,6 +216,7 @@ function onmsg(from,m){
     case'left':removePlayer(m.id);break;
     case'build':world.addPiece(m.s);break;
     case'rm':world.removeNode(m.id);break;
+    case'nofruit':world.hideFruit(m.id);break;
     case'vspawn':createVehicle(m.v);break;
     case'veh':{const v=S.vehicles.get(m.id);if(v&&v.occ[0]!==me.id){v.tx=m.x;v.ty=m.y;v.tz=m.z;v.try=m.ry}break}
     case'enter':{const v=S.vehicles.get(m.id);if(v)v.occ[m.seat]=m.pid;break}
@@ -552,7 +553,12 @@ function craft(id){
   showBanner('Fabriqué : '+(r.name||ITEMS[id]?.name||id),1500);
   renderInv();
 }
-function eat(){if(me.inv.meat>0&&me.hp<100&&!me.dead){me.inv.meat--;me.hp=Math.min(100,me.hp+30)}}
+// manger : la viande soigne plus (+30), les fruits (+15) servent quand il n'y a plus de viande
+function eat(){
+  if(me.hp>=100||me.dead)return;
+  if(me.inv.meat>0){me.inv.meat--;me.hp=Math.min(100,me.hp+30)}
+  else if(me.inv.fruit>0){me.inv.fruit--;me.hp=Math.min(100,me.hp+15)}
+}
 
 // ---- véhicules
 const vState=v=>({id:v.id,x:v.x,y:v.y,z:v.z,ry:v.ry,occ:v.occ});
@@ -605,6 +611,7 @@ function updateHint(){
   else if(nearestVehicle())h='E : monter dans le buggy';
   else if(S.treasure&&Math.hypot(S.treasure.x-me.pos.x,S.treasure.z-me.pos.z)<3.5)h='E : ouvrir le coffre !';
   else if(world.nearTable(me.pos.x,me.pos.z))h='Établi à proximité — Tab pour fabriquer';
+  else{let f=false;world.nearNodes(me.pos.x,me.pos.z,3.5,n=>{if(n.alive&&n.fruit>0&&Math.hypot(n.x-me.pos.x,n.z-me.pos.z)<3.2)f=true});if(f)h='Frappe le tronc pour faire tomber des fruits (F pour manger)'}
   $('hint').textContent=me.dead?'':h;
 }
 function interact(){
@@ -770,9 +777,12 @@ function hostHandle(from,m){
       const n=world.nodeMap.get(m.id);if(!n||!n.alive)return;
       n.hp-=m.p||1;
       const res={tree:'wood',rock:'stone',iron:'iron'}[n.kind];
-      let amt=1;
+      let amt=1;const loot={};
+      // arbre fruitier ou cocotier : chaque coup fait tomber un fruit tant qu'il en reste
+      if(n.fruit>0){n.fruit--;loot.fruit=1;if(!n.fruit){world.hideFruit(n.id);net.bcast({t:'nofruit',id:n.id})}}
       if(n.hp<=0){amt+=3;world.removeNode(n.id);H.removed.add(n.id);net.bcast({t:'rm',id:n.id})}
-      net.sendTo(from,{t:'loot',res:{[res]:amt}});
+      loot[res]=amt;
+      net.sendTo(from,{t:'loot',res:loot});
       break;
     }
     case'req_hit':{

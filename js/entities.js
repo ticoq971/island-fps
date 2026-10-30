@@ -3,8 +3,18 @@ import {FBXLoader} from 'three/addons/loaders/FBXLoader.js';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
-const mat=c=>new THREE.MeshLambertMaterial({color:c});
-function box(w,h,d,c,x=0,y=0,z=0){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat(c));m.position.set(x,y,z);return m}
+import {planks,stone,metal,fur} from './textures.js';
+
+// matériaux texturés selon la teinte : bois veiné, pierre, métal brossé ; les animaux passent par furMat
+const WOODS=new Set([0x8a5a2b,0xc9a15a,0x6b4a2b,0x7a4a1c,0x8d5a24]),STONES=new Set([0x888888]),METALS=new Set([0xb0b6bd,0xdfe6ee,0x2e2e2e,0x555555,0x333333,0x1a1a1a]);
+const mats=new Map();
+const mat=c=>{
+  let m=mats.get(c);
+  if(!m)mats.set(c,m=new THREE.MeshLambertMaterial({color:c,map:WOODS.has(c)?planks():STONES.has(c)?stone():METALS.has(c)?metal():null}));
+  return m;
+};
+const furMat=c=>{const k='f'+c;let m=mats.get(k);if(!m)mats.set(k,m=new THREE.MeshLambertMaterial({color:c,map:fur()}));return m};
+function box(w,h,d,c,x=0,y=0,z=0,m=mat(c)){const b=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);b.position.set(x,y,z);return b}
 
 // ---------- objets tenus en main (orientés selon +Y ; armes à distance selon -Z)
 export function itemMesh(id){
@@ -37,15 +47,37 @@ function makeHuman(color){
   return{g,armL:limb(.14,.65,-.34,1.42,color),armR:limb(.14,.65,.34,1.42,color),legL:limb(.18,.75,-.13,.75,0x334466),legR:limb(.18,.75,.13,.75,0x334466)};
 }
 const AS={bear:{c:0x5a3a22,w:.9,h:.9,l:1.7,leg:.6},wolf:{c:0x777777,w:.4,h:.5,l:1.1,leg:.45},deer:{c:0xb08050,w:.35,h:.55,l:1,leg:.8},boar:{c:0x6b4a3a,w:.5,h:.5,l:1,leg:.35}};
+// animaux : fourrure texturée, museau, oreilles, yeux, queue, plus bois du cerf et défenses du sanglier
 function makeAnimal(kind){
-  const s=AS[kind],g=new THREE.Group();
-  const body=box(s.w,s.h,s.l,s.c,0,s.leg+s.h/2,0);g.add(body);
-  const head=box(s.w*.7,s.h*.7,s.l*.3,s.c,0,s.leg+s.h*.8,-s.l/2-s.l*.12);g.add(head);
-  if(kind==='deer'){g.add(box(.05,.4,.05,0x5a4020,.08,s.leg+s.h+.3,-s.l/2-.1));g.add(box(.05,.4,.05,0x5a4020,-.08,s.leg+s.h+.3,-s.l/2-.1))}
+  const s=AS[kind],g=new THREE.Group(),F=furMat(s.c),Fd=furMat(new THREE.Color(s.c).multiplyScalar(.75).getHex());
+  const fb=(w,h,d,x,y,z,m=F)=>{const b=box(w,h,d,0,x,y,z,m);g.add(b);return b};
+  fb(s.w,s.h,s.l,0,s.leg+s.h/2,0);
+  fb(s.w*1.05,s.h*.55,s.l*.35,0,s.leg+s.h*.75,-s.l*.25); // garrot plus épais
+  const hy=s.leg+s.h*.8,hz=-s.l/2-s.l*.12;
+  fb(s.w*.7,s.h*.7,s.l*.3,0,hy,hz);
+  const snoutL=kind==='wolf'?s.l*.22:kind==='boar'?s.l*.16:s.l*.14;
+  fb(s.w*.38,s.h*.32,snoutL,0,hy-s.h*.12,hz-s.l*.15-snoutL/2,Fd);
+  g.add(box(s.w*.2,s.h*.12,.03,kind==='boar'?0xc77f7f:0x1a1a1a,0,hy-s.h*.08,hz-s.l*.15-snoutL)); // truffe / groin
+  for(const sx of[-1,1]){
+    g.add(box(.06,.06,.03,0x111111,sx*s.w*.22,hy+s.h*.12,hz-s.l*.15-.01)); // yeux
+    const ear=fb(s.w*.16,kind==='wolf'?s.h*.4:s.h*.25,.05,sx*s.w*.25,hy+s.h*.42,hz+.02,Fd);
+    if(kind==='wolf')ear.rotation.z=sx*.15;
+    if(kind==='boar')g.add(box(.04,.14,.04,0xf2eedc,sx*s.w*.16,hy-s.h*.15,hz-s.l*.15-snoutL*.8)); // défenses
+  }
+  if(kind==='deer')for(const sx of[-1,1]){
+    g.add(box(.05,.45,.05,0x5a4020,sx*.1,s.leg+s.h+.32,hz+.05));
+    g.add(box(.04,.22,.04,0x5a4020,sx*.2,s.leg+s.h+.5,hz+.05).rotateZ(sx*-.6));
+    g.add(box(.04,.18,.04,0x5a4020,sx*.06,s.leg+s.h+.62,hz-.05).rotateX(.5));
+  }
+  const tl=kind==='wolf'?.45:kind==='deer'?.12:kind==='boar'?.2:.14;
+  const tail=fb(kind==='wolf'?.12:.1,kind==='wolf'?.12:.1,tl,0,s.leg+s.h*.7,s.l/2+tl/2,kind==='deer'?mat(0xf2efe6):F);
+  tail.rotation.x=kind==='wolf'?.5:-.3;
   const legs=[];
   for(const[x,z]of[[-1,-1],[1,-1],[-1,1],[1,1]]){
     const p=new THREE.Group();p.position.set(x*s.w*.38,s.leg,z*s.l*.38);
-    p.add(box(.14,s.leg,.14,s.c*.8|0,0,-s.leg/2,0));g.add(p);legs.push(p);
+    p.add(box(.14,s.leg,.14,0,0,-s.leg/2,0,Fd));
+    p.add(box(.16,.08,.18,0x2a2420,0,-s.leg+.04,-.02)); // sabot / patte
+    g.add(p);legs.push(p);
   }
   return{g,legs};
 }
