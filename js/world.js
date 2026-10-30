@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {mergeGeometries} from 'three/addons/utils/BufferGeometryUtils.js';
 
 export function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -7,13 +8,24 @@ function hash(ix,iz,s){let h=(Math.imul(ix,374761393)+Math.imul(iz,668265263)+Ma
 function noise2(x,z,s){const ix=Math.floor(x),iz=Math.floor(z);const fx=sstep(x-ix),fz=sstep(z-iz);const a=hash(ix,iz,s),b=hash(ix+1,iz,s),c=hash(ix,iz+1,s),d=hash(ix+1,iz+1,s);return a+(b-a)*fx+(c-a)*fz+(a-b-c+d)*fx*fz}
 function fbm(x,z,s){let v=0,a=.5,f=1;for(let i=0;i<4;i++){v+=a*noise2(x*f,z*f,s+i*17);a*=.5;f*=2}return v}
 
+// bruit « en crêtes » : arêtes vives pour les montagnes
+function ridge(x,z,s){let v=0,a=.5,f=1;for(let i=0;i<4;i++){const n=1-Math.abs(noise2(x*f,z*f,s+i*23)*2-1);v+=a*n*n;a*=.5;f*=2}return v}
 export function heightAt(x,z,s){
   const d=Math.hypot(x,z)/190;
   const warp=(fbm(x*.01+50,z*.01+50,s)-.5)*.35;
-  const m=1-sstep(clamp((d+warp-.45)/.4,0,1));
+  let m=1-sstep(clamp((d+warp-.45)/.4,0,1));
+  // falaises : par endroits la côte monte d'un coup au lieu d'une plage en pente douce
+  const ck=sstep(clamp((fbm(x*.016+31,z*.016-17,s+13)-.52)/.1,0,1));
+  m=m*(1-ck)+clamp((m-.12)*5,0,1)*ck;
   const hills=fbm(x*.018,z*.018,s+3);
   const mount=Math.max(0,fbm(x*.012+200,z*.012,s+9)-.42)*2.6;
-  return -4+m*(7+hills*8+mount*mount*60);
+  let h=-4+m*(7+hills*8+mount*mount*60+mount*ridge(x*.022,z*.022,s+11)*30);
+  // lagons : par endroits le fond remonte à ~1 m, avec des bancs de sable qui affleurent
+  if(h<-.6){
+    const lg=sstep(clamp((fbm(x*.012-40,z*.012+70,s+17)-.48)/.12,0,1))*(1-sstep(clamp((d+warp-.95)/.15,0,1)));
+    if(lg>0)h=h*(1-lg)+(-1.15+(fbm(x*.07,z*.07,s+19)-.5)*1.8)*lg;
+  }
+  return h;
 }
 export function biomeAt(x,z,s){
   const h=heightAt(x,z,s);
@@ -27,10 +39,37 @@ export function biomeAt(x,z,s){
   return'forest';
 }
 
+// couronne de palmier : 10 palmes effilées qui montent puis retombent
+function palmCrown(){
+  const parts=[];
+  for(let i=0;i<8;i++){
+    const P=[],I=[],S=5;
+    for(let k=0;k<=S;k++){
+      const t=k/S,x=t*3.8,y=.9*t-2*t*t,w=.34*(1-.75*t)+.02;
+      P.push(x,y,-w,x,y+.08,0,x,y,w); // palme légèrement pliée en V
+      if(k){const a=(k-1)*3,b=k*3;I.push(a,b,a+1,a+1,b,b+1,a+1,b+1,a+2,a+2,b+1,b+2)}
+    }
+    const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));g.setIndex(I);
+    g.rotateZ(.15+((i*7)%3)*.08);g.rotateY(i*Math.PI/4+((i*37)%5)*.06);
+    parts.push(g);
+  }
+  const m=mergeGeometries(parts);m.computeVertexNormals();return m;
+}
+// feuillage en « chou-fleur » : plusieurs boules fusionnées
+function blobCrown(r){
+  const B=[[0,0,0,1],[.55,-.15,.2,.75],[-.5,-.1,-.35,.78],[.1,.42,-.25,.66]];
+  return mergeGeometries(B.map(([x,y,z,s])=>new THREE.IcosahedronGeometry(r*s,r>3?1:0).translate(x*r,y*r,z*r)));
+}
+// sapin en trois étages
+function pineCrown(){
+  return mergeGeometries([[1.7,3,-.6],[1.3,2.6,.9],[.85,2,2.2]].map(([r,h,y])=>new THREE.ConeGeometry(r,h,8).translate(0,y,0)));
+}
 const STY={
-  oak:{trunk:[.22,.34,3,6],tc:0x6b4a2b,tY:1.5,crown:()=>new THREE.IcosahedronGeometry(1.9,0),cc:0x2f7d32,cY:4.2},
-  pine:{trunk:[.18,.3,3,6],tc:0x5b4026,tY:1.5,crown:()=>new THREE.ConeGeometry(1.5,4.5,7),cc:0x1f5a2d,cY:4.6},
-  spine:{trunk:[.18,.3,3,6],tc:0x5b4026,tY:1.5,crown:()=>new THREE.ConeGeometry(1.5,4.5,7),cc:0xdde8ee,cY:4.6},
+  palm:{trunk:[.13,.24,5.4,7],tc:0x8a7350,tY:2.7,crown:palmCrown,cc:0x4fa23e,cY:5.3,ds:true},
+  giant:{trunk:[1.1,1.9,9,8],tc:0x5a4630,tY:4.5,crown:()=>blobCrown(5.5),cc:0x2b7a30,cY:16,sy:.6},
+  oak:{trunk:[.22,.34,3,6],tc:0x6b4a2b,tY:1.5,crown:()=>blobCrown(1.7),cc:0x2f7d32,cY:4.3},
+  pine:{trunk:[.18,.3,3,6],tc:0x5b4026,tY:1.5,crown:pineCrown,cc:0x1f5a2d,cY:4},
+  spine:{trunk:[.18,.3,3,6],tc:0x5b4026,tY:1.5,crown:pineCrown,cc:0xdde8ee,cY:4},
   dead:{trunk:[.12,.28,4.5,5],tc:0x4a4338,tY:2.2,crown:()=>new THREE.IcosahedronGeometry(.7,0),cc:0x4d5a2e,cY:4},
   cactus:{trunk:[.28,.3,2.6,7],tc:0x3d8a4a,tY:1.3,crown:()=>new THREE.SphereGeometry(.34,6,5),cc:0x3d8a4a,cY:2.6},
   rock:{trunk:null,crown:()=>new THREE.IcosahedronGeometry(1,0),cc:0x8a8a8a,cY:.5,sy:.75},
@@ -85,30 +124,164 @@ export function createWorld(scene,seed){
   W.biomeAt=(x,z)=>biomeAt(x,z,seed);
 
   // ---- terrain
-  const N=160,SZ=400;
+  const N=200,SZ=400;
   const geo=new THREE.PlaneGeometry(SZ,SZ,N,N);geo.rotateX(-Math.PI/2);
   const pos=geo.attributes.position;const colA=new Float32Array(pos.count*3);
-  const C={beach:0xe0cf94,water:0xb8a878,forest:0x417d36,snow:0xf1f5f9,desert:0xd8b05c,swamp:0x4f5d37,rock:0x7b7b7b};
-  const c=new THREE.Color();
+  for(let i=0;i<pos.count;i++)pos.setY(i,hAt(pos.getX(i),pos.getZ(i)));
+  geo.computeVertexNormals();
+  const nrm=geo.attributes.normal;
+  // palette : sable clair, fond turquoise puis bleu profond, jungle dense, falaises brunes, neige en altitude
+  const P={sand:0xf2e2b4,wet:0xd6c38e,teal:0x1fa3a8,reef:0x3f8f78,deep:0x0a3a73,jungle:0x2c7a2a,jungleHi:0x58a23c,dry:0x7d9138,cliff:0x77695a,cliffDark:0x55504a,
+    snow:0xf6f9fc,desert:0xd8b05c,swamp:0x4a6a35,cave:0x555555,white:0xffffff};
+  const c=new THREE.Color(),t2=new THREE.Color();
+  const mix=(a,b,t)=>c.set(a).lerp(t2.set(b),clamp(t,0,1));
   for(let i=0;i<pos.count;i++){
-    const x=pos.getX(i),z=pos.getZ(i);
-    pos.setY(i,hAt(x,z));
-    let b=biomeAt(x,z,seed);
-    c.set(C[b]);
-    for(const cv of caveList)if(Math.hypot(x-cv.x,z-cv.z)<8)c.set(0x555555);
-    c.multiplyScalar(.9+fbm(x*.15,z*.15,seed+40)*.2);
+    const x=pos.getX(i),z=pos.getZ(i),h=pos.getY(i),ny=nrm.getY(i);
+    const n=fbm(x*.15,z*.15,seed+40);
+    if(h<0){
+      const d=-h;
+      if(d<.9)c.set(P.sand);else if(d<2.3)mix(P.sand,P.teal,(d-.9)/1.4);else mix(P.teal,P.deep,(d-2.3)/1.7);
+      if(d>.4&&d<2.6&&fbm(x*.09,z*.09,seed+60)>.62)c.lerp(t2.set(P.reef),.7);
+      if(d<.45)c.lerp(t2.set(P.white),(1-d/.45)*.55*(.6+n));
+    }else{
+      const b=biomeAt(x,z,seed);
+      if(b==='beach')mix(P.wet,P.sand,h/.7);
+      else if(b==='forest'){mix(P.jungle,P.jungleHi,fbm(x*.04,z*.04,seed+70)*1.6-.2);if(h>9)c.lerp(t2.set(P.dry),clamp((h-9)/8,0,.6))}
+      else if(b==='swamp')c.set(P.swamp);
+      else if(b==='desert')mix(P.dry,P.jungleHi,fbm(x*.05,z*.05,seed+71)); // savane dorée plutôt que désert
+      else if(b==='snow')mix(P.jungle,P.dry,.25); // forêt de conifères ; la neige ne tient qu'en altitude
+      else c.set(P.cliff);
+      const steep=clamp((.82-ny)/.25,0,1);
+      if(steep>0)c.lerp(t2.set(n>.5?P.cliff:P.cliffDark),steep);
+      const sn=clamp((h-(19+n*4))/4,0,1);
+      if(sn>0)c.lerp(t2.set(P.snow),sn*(ny>.55?1:.6));
+    }
+    for(const cv of caveList)if(Math.hypot(x-cv.x,z-cv.z)<8)c.set(P.cave);
+    c.multiplyScalar(.92+n*.16);
     colA[i*3]=c.r;colA[i*3+1]=c.g;colA[i*3+2]=c.b;
   }
   geo.setAttribute('color',new THREE.BufferAttribute(colA,3));
-  geo.computeVertexNormals();
-  scene.add(new THREE.Mesh(geo,new THREE.MeshLambertMaterial({vertexColors:true})));
-  const sea=new THREE.Mesh(new THREE.PlaneGeometry(2400,2400).rotateX(-Math.PI/2),new THREE.MeshLambertMaterial({color:0x2a6fb0,transparent:true,opacity:.78}));
-  sea.position.y=-.05;scene.add(sea);
+  // texture de détail du sol : grain fin qui casse l'aspect lisse des couleurs
+  const gc=document.createElement('canvas');gc.width=gc.height=128;
+  {
+    const x=gc.getContext('2d'),img=x.createImageData(128,128),gr=mulberry32(seed^0x2b1d);
+    for(let i=0;i<128*128;i++){const v=200+gr()*55|0;img.data[i*4]=img.data[i*4+1]=img.data[i*4+2]=v;img.data[i*4+3]=255}
+    x.putImageData(img,0,0);
+  }
+  const grain=new THREE.CanvasTexture(gc);grain.wrapS=grain.wrapT=THREE.RepeatWrapping;grain.repeat.set(140,140);grain.colorSpace=THREE.SRGBColorSpace;
+  const ground=new THREE.Mesh(geo,new THREE.MeshLambertMaterial({vertexColors:true,map:grain}));
+  ground.receiveShadow=true;ground.castShadow=true;scene.add(ground);
+  // mer : shader avec la profondeur réelle (sable clair -> turquoise -> bleu profond), vagues, écume au rivage, reflets du soleil
+  const DS=256,dd=new Uint8Array(DS*DS*4);
+  for(let j=0;j<DS;j++)for(let i=0;i<DS;i++){
+    const h=hAt(-200+(i+.5)*400/DS,-200+(j+.5)*400/DS),k=(j*DS+i)*4;
+    dd[k]=clamp(-h/4,0,1)*255;dd[k+3]=255;
+  }
+  const depthTex=new THREE.DataTexture(dd,DS,DS,THREE.RGBAFormat);
+  depthTex.magFilter=depthTex.minFilter=THREE.LinearFilter;depthTex.needsUpdate=true;
+  const seaMat=new THREE.ShaderMaterial({
+    uniforms:THREE.UniformsUtils.merge([THREE.UniformsLib.fog,{depthTex:{value:null},time:{value:0},sunDir:{value:new THREE.Vector3(170,70,-120).normalize()},sunCol:{value:new THREE.Color(1,.72,.42)}}]),
+    transparent:true,depthWrite:false,fog:true,
+    vertexShader:`varying vec3 vW;
+#include <fog_pars_vertex>
+void main(){vec4 w=modelMatrix*vec4(position,1.);vW=w.xyz;vec4 mvPosition=viewMatrix*w;gl_Position=projectionMatrix*mvPosition;
+#include <fog_vertex>
+}`,
+    fragmentShader:`uniform sampler2D depthTex;uniform float time;uniform vec3 sunDir;uniform vec3 sunCol;varying vec3 vW;
+#include <fog_pars_fragment>
+float h21(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float n2(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x),f.y);}
+float waves(vec2 p){return n2(p*.35+vec2(time*.25,time*.18))*.5+n2(p*.9-vec2(time*.31,-time*.22))*.3+n2(p*2.3+vec2(-time*.6,time*.45))*.2;}
+void main(){
+  float d=texture2D(depthTex,(vW.xz+200.)/400.).r;
+  vec2 p=vW.xz;float e=.15,h0=waves(p);
+  vec3 n=normalize(vec3((h0-waves(p+vec2(e,0.)))*1.6,1.,(h0-waves(p+vec2(0.,e)))*1.6));
+  vec3 V=normalize(cameraPosition-vW);
+  float fres=pow(1.-max(dot(n,V),0.),4.);
+  vec3 col=mix(vec3(.45,.9,.78),vec3(.02,.62,.66),smoothstep(0.,.35,d));
+  col=mix(col,vec3(.004,.06,.2),smoothstep(.35,.95,d));
+  col=mix(col,vec3(.45,.62,.85),fres*.6);
+  vec3 R=reflect(-V,n);float rs=max(dot(R,sunDir),0.);
+  col+=sunCol*(pow(rs,220.)*6.+pow(rs,18.)*.25);
+  float foam=smoothstep(.07,0.,d)*(.55+.45*n2(p*1.5+time*.6))+smoothstep(.12,.06,d)*step(.72,n2(p*2.+vec2(time*.4,0.)))*.5;
+  foam=clamp(foam,0.,1.);
+  col=mix(col,vec3(1.),foam);
+  float a=max(max(mix(.45,.93,smoothstep(0.,.5,d)),foam),fres*.8);
+  gl_FragColor=vec4(col,a);
+#include <tonemapping_fragment>
+#include <colorspace_fragment>
+#include <fog_fragment>
+}`
+  });
+  seaMat.uniforms.depthTex.value=depthTex;
+  const sea=new THREE.Mesh(new THREE.PlaneGeometry(2400,2400).rotateX(-Math.PI/2),seaMat);
+  sea.position.y=-.05;sea.renderOrder=1;scene.add(sea);
+  // fond marin profond au-delà du terrain, pour que la mer reste bleue jusqu'à l'horizon
+  const floor=new THREE.Mesh(new THREE.PlaneGeometry(2600,2600).rotateX(-Math.PI/2),new THREE.MeshLambertMaterial({color:0x0a3a73}));
+  floor.position.y=-4.3;scene.add(floor);
+  // brume : sprites doux (cascades, vallées)
+  const mc=document.createElement('canvas');mc.width=mc.height=64;
+  {const x=mc.getContext('2d'),g=x.createRadialGradient(32,32,2,32,32,31);g.addColorStop(0,'rgba(255,250,240,.9)');g.addColorStop(1,'rgba(255,250,240,0)');x.fillStyle=g;x.fillRect(0,0,64,64)}
+  const mistTex=new THREE.CanvasTexture(mc);
+  const mist=(x,y,z,s,o)=>{const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:mistTex,transparent:true,opacity:o,depthWrite:false}));sp.position.set(x,y,z);sp.scale.set(s,s*.6,1);scene.add(sp)};
+  // rivières et cascades : rubans animés qui suivent la pente jusqu'à la mer
+  const sc2=document.createElement('canvas');sc2.width=64;sc2.height=128;
+  {
+    const x=sc2.getContext('2d'),sr=mulberry32(seed^0x7f4a);
+    x.fillStyle='rgba(255,255,255,.55)';x.fillRect(0,0,64,128);
+    for(let i=0;i<70;i++){x.fillStyle=`rgba(255,255,255,${.25+sr()*.6})`;x.fillRect(sr()*64,sr()*128,1+sr()*2.5,10+sr()*40)}
+  }
+  const streakTex=new THREE.CanvasTexture(sc2);streakTex.wrapS=streakTex.wrapT=THREE.RepeatWrapping;
+  const riverMat=new THREE.MeshBasicMaterial({map:streakTex,vertexColors:true,transparent:true,opacity:.88,depthWrite:false,side:THREE.DoubleSide,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2});
+  const clearR=[];
+  function buildRiver(x0,z0){
+    const pts=[];let x=x0,z=z0,dx=0,dz=0;
+    for(let s=0;s<320;s++){
+      const e=1.5,gx=(hAt(x+e,z)-hAt(x-e,z))/(2*e),gz=(hAt(x,z+e)-hAt(x,z-e))/(2*e),gl=Math.hypot(gx,gz);
+      if(gl<.004)break;
+      dx=dx*.7-gx/gl*.3;dz=dz*.7-gz/gl*.3;const dl=Math.hypot(dx,dz)||1;dx/=dl;dz/=dl;
+      x+=dx*2.2;z+=dz*2.2;
+      const h=hAt(x,z);pts.push({x,z,slope:gl});
+      if(h<.35||Math.hypot(x,z)>200)break;
+    }
+    if(pts.length<14)return;
+    const P2=[],C2=[],U2=[],I2=[];let len=0;const tc=new THREE.Color(),tw=new THREE.Color(0xffffff),tt=new THREE.Color(0x5fcfe0);
+    pts.forEach((p,i)=>{
+      const a=pts[Math.max(0,i-1)],b=pts[Math.min(pts.length-1,i+1)];
+      let tx=b.x-a.x,tz=b.z-a.z;const tl=Math.hypot(tx,tz)||1;tx/=tl;tz/=tl;
+      const w=.9+i/pts.length*1.6;
+      if(i>0)len+=Math.hypot(p.x-pts[i-1].x,p.z-pts[i-1].z);
+      for(const sd of[-1,1]){
+        const vx=p.x-tz*w*sd,vz=p.z+tx*w*sd;
+        P2.push(vx,hAt(vx,vz)+.2,vz);
+        tc.copy(tt).lerp(tw,clamp((p.slope-.12)/.25,0,1));C2.push(tc.r,tc.g,tc.b);
+        U2.push(sd<0?0:1,len/5);
+      }
+      if(i>0){const k=i*2;I2.push(k-2,k-1,k,k-1,k+1,k)}
+      clearR.push({x:p.x,z:p.z,r:3});
+      if(p.slope>.3&&i%3===0)mist(p.x,hAt(p.x,p.z)+2.5,p.z,9,.35);
+    });
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.Float32BufferAttribute(P2,3));g.setAttribute('color',new THREE.Float32BufferAttribute(C2,3));g.setAttribute('uv',new THREE.Float32BufferAttribute(U2,2));
+    g.setIndex(I2);
+    const m=new THREE.Mesh(g,riverMat);m.frustumCulled=false;scene.add(m);
+    const e=pts[pts.length-1];mist(e.x,1.4,e.z,14,.3);
+  }
+  {
+    const tops=[];
+    for(const p of cand)if(p.h>9&&!caveList.some(q=>Math.hypot(q.x-p.x,q.z-p.z)<30)&&tops.every(q=>Math.hypot(q.x-p.x,q.z-p.z)>70)){tops.push(p);if(tops.length>=3)break}
+    for(const p of tops)buildRiver(p.x,p.z);
+  }
+  // brume basse au-dessus de la canopée
+  for(let a=0,n=0;a<400&&n<34;a++){
+    const x=(rng()-.5)*340,z=(rng()-.5)*340,h=hAt(x,z);
+    if(h>1&&h<10){mist(x,h+10+rng()*6,z,28+rng()*20,.13);n++}
+  }
 
   // ---- boîtes de collision / structures
   function addBox(x,y,z,w,h,d,color,walk){
     const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshLambertMaterial({color}));
-    m.position.set(x,y,z);W.struct.add(m);
+    m.position.set(x,y,z);m.castShadow=m.receiveShadow=true;W.struct.add(m);
     W.boxes.push({minx:x-w/2,maxx:x+w/2,miny:y-h/2,maxy:y+h/2,minz:z-d/2,maxz:z+d/2,walk});
   }
 
@@ -116,23 +289,121 @@ export function createWorld(scene,seed){
   const items=[];
   const addItem=(kind,style,x,y,z,s,r)=>items.push({kind,style,x,y,z,s,r,rot:rng()*6.28});
   const nearCave=(x,z)=>caveList.some(q=>Math.hypot(q.x-x,q.z-z)<14);
+  const inClear=(x,z)=>{for(const p of clearR){const dx=p.x-x,dz=p.z-z;if(dx*dx+dz*dz<p.r*p.r)return true}return false};
+
+  // ---- constructions décoratives : cabanes, tours de guet, pontons, rochers en mer, arche
+  const addColl=(x,y,z,w,h,d)=>W.boxes.push({minx:x-w/2,maxx:x+w/2,miny:y-h/2,maxy:y+h/2,minz:z-d/2,maxz:z+d/2,walk:true});
+  const WOOD=0x8b6a45,WOOD2=0x6e4f30,THATCH=0xa6894a;
+  const placed=[];
+  const flat=(x,z,r)=>{let lo=1e9,hi=-1e9;for(const[i,j]of[[-r,-r],[r,-r],[-r,r],[r,r],[0,0]]){const h=hAt(x+i,z+j);lo=Math.min(lo,h);hi=Math.max(hi,h)}return{lo,hi}};
+  const coastNear=(x,z)=>{for(let a=0;a<8;a++){const an=a*Math.PI/4;if(hAt(x+Math.cos(an)*22,z+Math.sin(an)*22)<.2)return true}return false};
+  const free=(x,z,d)=>placed.every(p=>Math.hypot(p.x-x,p.z-z)>d)&&!caveList.some(q=>Math.hypot(q.x-x,q.z-z)<24)&&!inClear(x,z);
+  const roofMat=new THREE.MeshLambertMaterial({color:THATCH});
+  function hut(cx,cz){
+    const y=flat(cx,cz,2.6).hi+.15;
+    addBox(cx,y-1.5,cz,4.6,3,4.6,WOOD2,true);
+    addBox(cx,y+1.3,cz-2.1,4.4,2.6,.25,WOOD,true);
+    addBox(cx-2.1,y+1.3,cz,.25,2.6,4.2,WOOD,true);addBox(cx+2.1,y+1.3,cz,.25,2.6,4.2,WOOD,true);
+    addBox(cx-1.45,y+1.3,cz+2.1,1.5,2.6,.25,WOOD,true);addBox(cx+1.45,y+1.3,cz+2.1,1.5,2.6,.25,WOOD,true);addBox(cx,y+2.3,cz+2.1,1.4,.6,.25,WOOD,true);
+    const r=new THREE.Mesh(new THREE.ConeGeometry(3.7,1.9,4),roofMat);r.rotation.y=Math.PI/4;r.position.set(cx,y+3.55,cz);W.struct.add(r);
+    placed.push({x:cx,z:cz});clearR.push({x:cx,z:cz,r:5});
+  }
+  function tower(cx,cz){
+    const y=flat(cx,cz,2).hi+.1;
+    for(const sx of[-1.7,1.7])for(const sz of[-1.7,1.7])addBox(cx+sx,y+3,cz+sz,.4,8,.4,WOOD2,true);
+    addBox(cx,y+7.15,cz,4.6,.3,4.6,WOOD,true);
+    addBox(cx-2.15,y+7.75,cz,.15,.9,4.6,WOOD,true);addBox(cx,y+7.75,cz-2.15,4.6,.9,.15,WOOD,true);addBox(cx,y+7.75,cz+2.15,4.6,.9,.15,WOOD,true);
+    for(const sx of[-2,2])for(const sz of[-2,2])addBox(cx+sx,y+8.65,cz+sz,.2,2.7,.2,WOOD2,true);
+    const r=new THREE.Mesh(new THREE.ConeGeometry(3.7,1.8,4),roofMat);r.rotation.y=Math.PI/4;r.position.set(cx,y+10.35,cz);W.struct.add(r);
+    for(let i=0;i<12;i++){ // escalier : marches de .6 m, franchissables à pied
+      const top=y+.6*(i+1),bot=y-1.5,x=cx+2.6+(11-i)*.8;
+      addBox(x,(top+bot)/2,cz,.8,top-bot,1.6,WOOD,true);
+    }
+    placed.push({x:cx,z:cz});
+    for(let i=0;i<5;i++)clearR.push({x:cx+i*2.5,z:cz,r:3.5});
+  }
+  function pier(){
+    for(let a=0;a<600;a++){
+      const x=(rng()-.5)*380,z=(rng()-.5)*380,h=hAt(x,z);
+      if(h<.3||h>1.6||biomeAt(x,z,seed)!=='beach'||!free(x,z,30))continue;
+      const[dx,dz]=[[1,0],[-1,0],[0,1],[0,-1]][Math.floor(rng()*4)];
+      let ts=-1;for(let t=0;t<30;t+=1.5)if(hAt(x+dx*t,z+dz*t)<.1){ts=t;break}
+      if(ts<0||ts>14||hAt(x+dx*(ts+16),z+dz*(ts+16))>-.4)continue;
+      const s0=ts-1.5,cx=x+dx*(s0+8),cz=z+dz*(s0+8),ax=dx!==0;
+      addBox(cx,.4,cz,ax?16:2.2,.2,ax?2.2:16,WOOD,true);
+      for(let t=1;t<=15;t+=4)for(const sd of[-1,1]){const px=x+dx*(s0+t)-dz*sd,pz=z+dz*(s0+t)+dx*sd;addBox(px,-1.5,pz,.3,4,.3,WOOD2,true)}
+      placed.push({x,z});clearR.push({x,z,r:6});return;
+    }
+  }
+  const rockMat=new THREE.MeshLambertMaterial({color:0xb3a690,emissive:0x2a241c,flatShading:true}),mossMat=new THREE.MeshLambertMaterial({color:0x3d7a32,flatShading:true});
+  function rockCyl(rt,rb,hgt,x,y,z){
+    const g=new THREE.CylinderGeometry(rt,rb,hgt,7,2),p=g.attributes.position;
+    for(let i=0;i<p.count;i++){p.setX(i,p.getX(i)+(rng()-.5)*rb*.35);p.setZ(i,p.getZ(i)+(rng()-.5)*rb*.35)}
+    g.computeVertexNormals();const m=new THREE.Mesh(g,rockMat);m.position.set(x,y,z);W.struct.add(m);return m;
+  }
+  function stack(x,z,hgt,rad){
+    rockCyl(rad*.7,rad*1.1,hgt,x,hgt/2-3,z);
+    const cap=new THREE.Mesh(new THREE.SphereGeometry(rad*.8,7,5),mossMat);cap.scale.y=.4;cap.position.set(x,hgt-3.05,z);W.struct.add(cap);
+    addColl(x,hgt/2-3,z,rad*1.5,hgt,rad*1.5);
+  }
+  function arch(x,z){
+    for(const sx of[-2.8,2.8]){rockCyl(1.1,1.5,6.5,x+sx,.25,z);addColl(x+sx,.25,z,2.2,6.5,2.2)}
+    const t=new THREE.Mesh(new THREE.TorusGeometry(2.8,.9,6,14,Math.PI),rockMat);t.position.set(x,3.5,z);W.struct.add(t);
+    addColl(x,6.2,z,6.4,2,2);
+  }
+  for(let a=0,n=0;a<500&&n<5;a++){
+    const x=(rng()-.5)*340,z=(rng()-.5)*340,h=hAt(x,z),f=flat(x,z,3);
+    if(h<1.6||h>4||biomeAt(x,z,seed)!=='forest'||f.hi-f.lo>.7||!coastNear(x,z)||!free(x,z,38))continue;
+    hut(x,z);n++;
+  }
+  for(let a=0,n=0;a<600&&n<2;a++){
+    const x=(rng()-.5)*340,z=(rng()-.5)*340,h=hAt(x,z),f=flat(x,z,2.4);
+    if(h<2||h>9||f.hi-f.lo>.6||biomeAt(x,z,seed)==='rock'||!free(x,z,60))continue;
+    tower(x,z);n++;
+  }
+  pier();pier();
+  {
+    const st=[];
+    for(let a=0;a<900&&st.length<16;a++){
+      const x=(rng()-.5)*420,z=(rng()-.5)*420,h=hAt(x,z);
+      if(h>-1.6||h<-3.7||Math.hypot(x,z)>200||st.some(p=>Math.hypot(p.x-x,p.z-z)<16))continue;
+      st.push({x,z});stack(x,z,6+rng()*10,1.6+rng()*1.8);
+    }
+    for(let a=0;a<900;a++){
+      const x=(rng()-.5)*380,z=(rng()-.5)*380,h=hAt(x,z);
+      if(h>-.5||h<-1.4||!coastNear(x,z)||!free(x,z,40)||st.some(p=>Math.hypot(p.x-x,p.z-z)<12))continue;
+      arch(x,z);placed.push({x,z});break;
+    }
+  }
+
   const occ=new Set();let treeN=0;
-  const PT={forest:.75,snow:.4,swamp:.3,desert:.025,rock:.03,beach:0,water:0};
-  for(let a=0;a<24000&&treeN<2600;a++){
+  const PT={forest:.75,snow:.4,swamp:.3,desert:.025,rock:.03,beach:.25,water:0};
+  for(let a=0;a<34000&&treeN<3600;a++){
     const x=(rng()-.5)*380,z=(rng()-.5)*380;const h=hAt(x,z);
-    if(h<.9)continue;
+    if(h<.35)continue;
     const b=biomeAt(x,z,seed);
     if(rng()>PT[b])continue;
-    if(nearCave(x,z))continue;
+    if(nearCave(x,z)||inClear(x,z))continue;
     const k=Math.round(x/2.4)+','+Math.round(z/2.4);
     if(occ.has(k))continue;occ.add(k);
-    const style=b==='snow'?'spine':b==='desert'?'cactus':b==='swamp'?'dead':(rng()<.4?'pine':'oak');
-    addItem('tree',style,x,h,z,.8+rng()*.6,.55);treeN++;
+    const style=b==='snow'?'pine':b==='desert'?'palm':b==='swamp'?'dead':b==='beach'?'palm':h<3.2?(rng()<.5?'palm':'oak'):h>9?(rng()<.7?'pine':'oak'):(rng()<.85?'oak':'pine');
+    addItem('tree',style,x,h,z,.8+rng()*.6,style==='palm'?.4:.55);treeN++;
+  }
+  for(let a=0,n=0;a<1500&&n<6;a++){ // arbres géants de la jungle
+    const x=(rng()-.5)*300,z=(rng()-.5)*300,h=hAt(x,z);
+    if(h<2||h>8||biomeAt(x,z,seed)!=='forest'||nearCave(x,z)||inClear(x,z))continue;
+    addItem('tree','giant',x,h,z,1,2.2);clearR.push({x,z,r:5});n++;
+  }
+  const bushPos=[];
+  for(let a=0;a<9000&&bushPos.length<1800;a++){
+    const x=(rng()-.5)*380,z=(rng()-.5)*380,h=hAt(x,z);
+    if(h<1||h>14||biomeAt(x,z,seed)!=='forest'||nearCave(x,z)||inClear(x,z))continue;
+    bushPos.push({x,z,h,s:.6+rng()*.9});
   }
   let rockN=0,ironN=0;
   for(let a=0;a<8000&&(rockN<260||ironN<40);a++){
     const x=(rng()-.5)*380,z=(rng()-.5)*380;const h=hAt(x,z);
-    if(h<.9||nearCave(x,z))continue;
+    if(h<.9||nearCave(x,z)||inClear(x,z))continue;
     const b=biomeAt(x,z,seed);
     if(b==='rock'&&ironN<40&&rng()<.05){const s=.7+rng()*.7;addItem('iron','iron',x,h,z,s,s*.9);ironN++;continue}
     if(rockN<260&&rng()<(b==='rock'?.12:.012)){const s=.7+rng()*1.1;addItem('rock','rock',x,h,z,s,s*.95);rockN++}
@@ -144,10 +415,15 @@ export function createWorld(scene,seed){
     const dirs=[[0,1],[1,0],[0,-1],[-1,0]];let k=0,best=1e9;
     dirs.forEach((d,i)=>{const hh=heightAt(cx+d[0]*9,cz+d[1]*9,seed);if(hh<best){best=hh;k=i}});
     const T=(lx,lz)=>k===0?[lx,lz]:k===1?[lz,-lx]:k===2?[-lx,-lz]:[-lz,lx];
-    const add=(lx,lz,w,d,yb,hh)=>{const[dx,dz]=T(lx,lz);const odd=k%2===1;addBox(cx+dx,yb+hh/2,cz+dz,odd?d:w,hh,odd?w:d,0x6c6c6c,true)};
+    const add=(lx,lz,w,d,yb,hh)=>{const[dx,dz]=T(lx,lz);const odd=k%2===1;addBox(cx+dx,yb+hh/2,cz+dz,odd?d:w,hh,odd?w:d,0x7f7262,true)};
     add(0,-5,10,1,y0-2,6.5);add(-5,0,1,10,y0-2,6.5);add(5,0,1,10,y0-2,6.5);
     add(-3.25,5,3.5,1,y0-2,6.5);add(3.25,5,3.5,1,y0-2,6.5);
     add(0,0,11,11,y0+4.5,1);
+    // habillage rocheux : gros blocs autour et par-dessus pour que la grotte ressemble à un rocher, pas à une boîte
+    rockCyl(6.2,7.4,3,cx,y0+5.6,cz);
+    for(const[lx,lz,r,h]of[[-5.6,-5.6,2.4,6],[5.6,-5.6,2.6,7],[-6.2,1.5,2.2,5.5],[6.2,1.5,2.3,6],[0,-6.6,2.8,7.5],[-5,5.4,1.6,5],[5,5.4,1.7,5.2]]){
+      const[dx,dz]=T(lx,lz);rockCyl(r*.7,r,h,cx+dx,y0-2+h/2,cz+dz);
+    }
     const L=new THREE.PointLight(0xffd7a0,50,18,2);L.position.set(cx,y0+2.5,cz);scene.add(L);
     for(const[lx,lz]of[[-3,-3],[3,-3.5],[-3.5,.5]]){const[dx,dz]=T(lx,lz);addItem('iron','iron',cx+dx,hAt(cx+dx,cz+dz),cz+dz,.9,.85)}
   }
@@ -159,22 +435,43 @@ export function createWorld(scene,seed){
   const Z=new THREE.Matrix4().makeScale(0,0,0);
   const q=new THREE.Quaternion(),m4=new THREE.Matrix4(),v=new THREE.Vector3(),sc=new THREE.Vector3(),col=new THREE.Color(),UP=new THREE.Vector3(0,1,0);
   let id=0;
+  // découpage en carrés de 50 m : seules les zones visibles (et proches pour les ombres) sont dessinées
   for(const[style,list]of Object.entries(groups)){
-    const D=STY[style];const meshes=[];
-    if(D.trunk){const g=new THREE.CylinderGeometry(...D.trunk);g.translate(0,D.tY,0);meshes.push({m:new THREE.InstancedMesh(g,new THREE.MeshLambertMaterial(),list.length),c:D.tc,y:1})}
-    {const g=D.crown();g.translate(0,D.cY,0);meshes.push({m:new THREE.InstancedMesh(g,new THREE.MeshLambertMaterial(),list.length),c:D.cc,y:D.sy||1})}
-    list.forEach((it,i)=>{
-      const node={id:id++,kind:it.kind,x:it.x,y:it.y,z:it.z,r:it.r,hp:HP[it.kind],alive:true,parts:[]};
-      q.setFromAxisAngle(UP,it.rot);
+    const D=STY[style];
+    const tg=D.trunk?new THREE.CylinderGeometry(...D.trunk).translate(0,D.tY,0):null,tm=new THREE.MeshLambertMaterial();
+    const cg=D.crown().translate(0,D.cY,0),cm=new THREE.MeshLambertMaterial({side:D.ds?THREE.DoubleSide:THREE.FrontSide});
+    const chunks=new Map();
+    for(const it of list){const k=Math.floor(it.x/50)+','+Math.floor(it.z/50);let c=chunks.get(k);if(!c)chunks.set(k,c=[]);c.push(it)}
+    for(const sub of chunks.values()){
+      const meshes=[];
+      if(tg)meshes.push({m:new THREE.InstancedMesh(tg,tm,sub.length),c:D.tc,y:1});
+      meshes.push({m:new THREE.InstancedMesh(cg,cm,sub.length),c:D.cc,y:D.sy||1});
+      sub.forEach((it,i)=>{
+        const node={id:id++,kind:it.kind,x:it.x,y:it.y,z:it.z,r:it.r,hp:HP[it.kind],alive:true,parts:[]};
+        q.setFromAxisAngle(UP,it.rot);
+        for(const M of meshes){
+          v.set(it.x,it.y,it.z);sc.set(it.s,it.s*M.y,it.s);m4.compose(v,q,sc);
+          M.m.setMatrixAt(i,m4);col.set(M.c).multiplyScalar(.85+rng()*.3);M.m.setColorAt(i,col);
+          node.parts.push({m:M.m,i});
+        }
+        W.nodes.push(node);W.nodeMap.set(node.id,node);gridAdd(node);
+      });
       for(const M of meshes){
-        v.set(it.x,it.y,it.z);sc.set(it.s,it.s*M.y,it.s);m4.compose(v,q,sc);
-        M.m.setMatrixAt(i,m4);col.set(M.c).multiplyScalar(.85+rng()*.3);M.m.setColorAt(i,col);
-        node.parts.push({m:M.m,i});
+        M.m.instanceMatrix.needsUpdate=true;if(M.m.instanceColor)M.m.instanceColor.needsUpdate=true;
+        M.m.computeBoundingSphere();M.m.castShadow=M.m.receiveShadow=true;scene.add(M.m);
       }
-      W.nodes.push(node);W.nodeMap.set(node.id,node);gridAdd(node);
-    });
-    for(const M of meshes){M.m.instanceMatrix.needsUpdate=true;if(M.m.instanceColor)M.m.instanceColor.needsUpdate=true;M.m.frustumCulled=false;scene.add(M.m)}
+    }
   }
+  {
+    const bm=new THREE.InstancedMesh(new THREE.IcosahedronGeometry(.6,0),new THREE.MeshLambertMaterial(),bushPos.length);
+    bushPos.forEach((b,i)=>{
+      v.set(b.x,b.h+.25,b.z);sc.set(b.s,b.s*.7,b.s);q.setFromAxisAngle(UP,rng()*6.28);m4.compose(v,q,sc);bm.setMatrixAt(i,m4);
+      col.set(rng()<.5?0x2e7d32:0x58a03a).multiplyScalar(.8+rng()*.4);bm.setColorAt(i,col);
+    });
+    bm.instanceMatrix.needsUpdate=true;if(bm.instanceColor)bm.instanceColor.needsUpdate=true;bm.frustumCulled=false;bm.castShadow=bm.receiveShadow=true;scene.add(bm);
+  }
+  W.struct.traverse(o=>{if(o.isMesh)o.castShadow=o.receiveShadow=true});
+  W.tick=dt=>{seaMat.uniforms.time.value+=dt;streakTex.offset.y-=dt*1.1};
   W.removeNode=nid=>{const n=W.nodeMap.get(nid);if(!n||!n.alive)return null;n.alive=false;for(const p of n.parts){p.m.setMatrixAt(p.i,Z);p.m.instanceMatrix.needsUpdate=true}return n};
   W.nearNodes=(x,z,rad,fn)=>{
     const x0=Math.floor((x-rad)/8),x1=Math.floor((x+rad)/8),z0=Math.floor((z-rad)/8),z1=Math.floor((z+rad)/8);

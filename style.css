@@ -26,6 +26,13 @@ details{margin-top:8px;font-size:13px;color:#cde}
 #score:empty,#info:empty{display:none}
 #banner{left:50%;top:18%;transform:translateX(-50%);font-size:30px;font-weight:700;text-shadow:0 0 8px #000;text-align:center;opacity:0;transition:opacity .3s}
 #hint{left:50%;top:58%;transform:translateX(-50%);font-size:16px;text-shadow:0 0 5px #000}
+#padhelp{right:10px;top:62px;background:rgba(0,0,0,.5);border-radius:8px;padding:7px 10px;font-size:12px;text-shadow:0 0 3px #000;min-width:190px}
+.ph-t{font-weight:700;margin-bottom:4px;color:#9cd}
+.ph-r{display:flex;align-items:center;gap:7px;padding:2px 3px;border-radius:5px}
+.ph-r.on{background:rgba(255,210,122,.3)}
+.gb{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:22px;padding:0 5px;border-radius:12px;font-weight:700;font-size:11px;color:#fff;background:#555;border:1px solid rgba(255,255,255,.35)}
+.gb.a{background:#3ea34a}.gb.b{background:#d33f3f}.gb.x{background:#3b7dd8}.gb.y{background:#d9a826;color:#222}
+.gb.sh,.gb.trig{border-radius:6px;background:#6a6a6a}.gb.st{background:#3d3d3d}.gb.dp{background:#444}.gb.sm{background:#2f2f2f}
 #buildinfo{left:50%;bottom:92px;transform:translateX(-50%);background:rgba(0,0,0,.55);padding:7px 14px;border-radius:8px;font-size:14px}
 #bars{left:12px;bottom:12px;width:260px}
 #hp{height:20px;background:#400;border:2px solid #000;border-radius:5px;position:relative;overflow:hidden}

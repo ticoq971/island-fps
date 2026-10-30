@@ -57,9 +57,11 @@ export async function loadKits(){
   if(loaded)return;loaded=true;
   try{
     const l=new FBXLoader(),base='assets/mixamo/';
-    const scene=await l.loadAsync(base+'character.fbx');
-    const clips={};
-    for(const n of['idle','walk','run','attack','death']){try{const f=await l.loadAsync(base+n+'.fbx');if(f.animations[0])clips[n]=f.animations[0]}catch(e){}}
+    // idle.fbx contient le personnage (Crypto, avec peau) : il sert aussi de modèle
+    const idle=await l.loadAsync(base+'idle.fbx');
+    const scene=idle;
+    const clips={idle:idle.animations[0]};
+    for(const n of['walk','run','attack','shoot','stab','chop']){try{const f=await l.loadAsync(base+n+'.fbx');if(f.animations[0])clips[n]=f.animations[0]}catch(e){}}
     scene.traverse(o=>{if(o.isMesh)o.frustumCulled=false});
     HK.v={scene,clips,scale:.01,rot:Math.PI};
   }catch(e){}
@@ -71,6 +73,14 @@ export async function loadKits(){
       AK[k]={scene:gl.scene,clips,scale:1,rot:0};
     }catch(e){}
   }
+}
+
+// animation d'attaque selon l'objet tenu : fusil -> tir, lance -> coup d'estoc, pioche -> coup de pioche
+function attackClip(id){
+  if(id==='rifle')return'shoot';
+  if(id==='spear'||id==='iron_spear')return'stab';
+  if(id==='pickaxe'||id==='iron_pickaxe')return'chop';
+  return'attack';
 }
 
 export function nameTag(text){
@@ -94,6 +104,7 @@ export class Actor{
       this.p=kind==='human'?makeHuman(o.color||0x3a6ea5):makeAnimal(kind);
       this.root.add(this.p.g);
     }
+    this.root.traverse(c=>{if(c.isMesh)c.castShadow=true});
     if(o.name){const s=nameTag(o.name);s.position.y=kind==='human'?2.1:2.2;this.root.add(s)}
   }
   setItem(id){
@@ -105,13 +116,15 @@ export class Actor{
     else if(this.hand){m.scale.setScalar(1/this.kit.scale);m.rotation.x=r?0:-Math.PI/2;this.hand.add(m);this.held=m}
   }
   update(dt,speed,attackPulse){
-    if(attackPulse)this.att=.35;
+    const atk=attackClip(this.itemId);
+    if(attackPulse)this.att=this.acts&&this.acts[atk]?this.acts[atk].getClip().duration*.8:.35;
     this.att=Math.max(0,this.att-dt);
-    const st=this.att>0?'attack':speed>5.5?'run':speed>.6?'walk':'idle';
+    const st=this.att>0?atk:speed>5.5?'run':speed>.6?'walk':'idle';
     if(this.mixer){
       if(st!==this.state){
         this.state=st;
-        const a=this.acts[st]||this.acts[st==='run'?'walk':'idle']||Object.values(this.acts)[0];
+        const fb={shoot:'attack',stab:'attack',chop:'attack',run:'walk'}[st]||'idle';
+        const a=this.acts[st]||this.acts[fb]||Object.values(this.acts)[0];
         if(a&&a!==this.cur){a.reset().fadeIn(.2).play();if(this.cur)this.cur.fadeOut(.2);this.cur=a}
       }
       this.mixer.update(dt);
