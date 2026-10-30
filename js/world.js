@@ -76,6 +76,15 @@ const STY={
   iron:{trunk:null,crown:()=>new THREE.IcosahedronGeometry(1,0),cc:0xa8683c,cY:.5,sy:.75},
 };
 const HP={tree:60,rock:90,iron:110};
+// fonctions GLSL communes à la mer et aux rivières : bruit et couleur du ciel reflété (même dégradé que le ciel du jeu)
+const WATER_GLSL=`
+float h21(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float n2(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x),f.y);}
+vec3 skyCol(vec3 d){
+  float h=clamp(d.y,0.,1.);vec3 c=mix(vec3(1.,.8,.6),vec3(.5,.7,.92),smoothstep(0.,.22,h));c=mix(c,vec3(.12,.3,.66),smoothstep(.18,.85,h));
+  c+=vec3(1.,.66,.3)*pow(max(dot(d,sunDir),0.),5.)*.55;return pow(c,vec3(2.2));
+}`;
+const SUN_DIR=new THREE.Vector3(170,70,-120).normalize();
 const STEP=.7;
 const PC={wood:0x9c6b3c,stone:0x8e8e8e};
 
@@ -112,7 +121,7 @@ export function createWorld(scene,seed){
     }
   }
   W.caves=caveList;
-  const hAt=(x,z)=>{
+  const hBase=(x,z)=>{
     let h=heightAt(x,z,seed);
     for(const c of caveList){
       const dx=x-c.x,dz=z-c.z;
@@ -120,11 +129,47 @@ export function createWorld(scene,seed){
     }
     return h;
   };
-  W.heightAt=hAt;
+  // ---- rivières : tracées depuis les sommets en suivant la pente, puis creusées dans le terrain (lit + berges)
+  const rivers=[],rgrid=new Map(),rk=(a,b)=>a*1000+b;
+  {
+    const tops=[];
+    for(const p of cand)if(p.h>9&&!caveList.some(q=>Math.hypot(q.x-p.x,q.z-p.z)<30)&&tops.every(q=>Math.hypot(q.x-p.x,q.z-p.z)>70)){tops.push(p);if(tops.length>=3)break}
+    for(const p0 of tops){
+      const pts=[];let x=p0.x,z=p0.z,dx=0,dz=0,lv=1e9;
+      for(let s=0;s<320;s++){
+        const e=1.5,gx=(hBase(x+e,z)-hBase(x-e,z))/(2*e),gz=(hBase(x,z+e)-hBase(x,z-e))/(2*e),gl=Math.hypot(gx,gz);
+        // sur le plat, la rivière file vers le large (loin du centre de l'île) au lieu de tourner en rond
+        const rl=Math.hypot(x,z)||1,wg=clamp(gl/.06,0,1);
+        const ndx=-gx/(gl||1)*wg+x/rl*(1-wg),ndz=-gz/(gl||1)*wg+z/rl*(1-wg);
+        dx=dx*.7+ndx*.3;dz=dz*.7+ndz*.3;const dl=Math.hypot(dx,dz)||1;dx/=dl;dz/=dl;
+        x+=dx*2.2;z+=dz*2.2;
+        const h=hBase(x,z);lv=Math.min(lv,h-.35); // niveau de l'eau : ne remonte jamais vers l'aval
+        pts.push({x,z,slope:gl,lv});
+        if(h<.2||Math.hypot(x,z)>200)break;
+        if(pts.length>20){const o=pts[pts.length-20];if(Math.hypot(o.x-x,o.z-z)<8)break} // bloquée : on arrête
+      }
+      if(pts.length<14)continue;
+      pts.forEach((q,i)=>{q.w=1+i/pts.length*2.2;q.bed=q.lv-.75;const k=rk(Math.floor(q.x/8),Math.floor(q.z/8));let l=rgrid.get(k);if(!l)rgrid.set(k,l=[]);l.push(q)});
+      rivers.push(pts);
+    }
+  }
+  // point de rivière le plus proche (dans un rayon de ~16 m), ou null
+  const riverNear=(x,z)=>{
+    if(!rgrid.size)return null;
+    const cx=Math.floor(x/8),cz=Math.floor(z/8);let best=null,bd=1e9;
+    for(let a=-2;a<=2;a++)for(let b=-2;b<=2;b++){const l=rgrid.get(rk(cx+a,cz+b));if(l)for(const q of l){const d=(q.x-x)**2+(q.z-z)**2;if(d<bd){bd=d;best=q}}}
+    return best?{q:best,d:Math.sqrt(bd)}:null;
+  };
+  const hAt=(x,z)=>{
+    const h=hBase(x,z),r=riverNear(x,z);
+    if(!r)return h;
+    return Math.min(h,r.q.bed+Math.max(0,r.d-r.q.w*.7)*.9); // lit plat puis berges en pente
+  };
+  W.heightAt=hAt;W.rivers=rivers;
   W.biomeAt=(x,z)=>biomeAt(x,z,seed);
 
   // ---- terrain
-  const N=200,SZ=400;
+  const N=260,SZ=400;
   const geo=new THREE.PlaneGeometry(SZ,SZ,N,N);geo.rotateX(-Math.PI/2);
   const pos=geo.attributes.position;const colA=new Float32Array(pos.count*3);
   for(let i=0;i<pos.count;i++)pos.setY(i,hAt(pos.getX(i),pos.getZ(i)));
@@ -150,11 +195,13 @@ export function createWorld(scene,seed){
       else if(b==='swamp')c.set(P.swamp);
       else if(b==='desert')mix(P.dry,P.jungleHi,fbm(x*.05,z*.05,seed+71)); // savane dorée plutôt que désert
       else if(b==='snow')mix(P.jungle,P.dry,.25); // forêt de conifères ; la neige ne tient qu'en altitude
-      else c.set(P.cliff);
+      else mix(P.jungle,P.cliff,clamp((h-15)/18,0,1)*.75); // montagne : jungle qui laisse place à la roche en montant
       const steep=clamp((.82-ny)/.25,0,1);
       if(steep>0)c.lerp(t2.set(n>.5?P.cliff:P.cliffDark),steep);
-      const sn=clamp((h-(19+n*4))/4,0,1);
+      const sn=clamp((h-(30+n*4))/4,0,1); // neige seulement sur les plus hauts sommets
       if(sn>0)c.lerp(t2.set(P.snow),sn*(ny>.55?1:.6));
+      const rv=riverNear(x,z); // lit de galets et berges humides
+      if(rv&&rv.d<rv.q.w+3)c.lerp(t2.set(rv.d<rv.q.w?0x6c6650:0x4f5a34),clamp(1-(rv.d-rv.q.w)/3,0,1)*.85);
     }
     for(const cv of caveList)if(Math.hypot(x-cv.x,z-cv.z)<8)c.set(P.cave);
     c.multiplyScalar(.92+n*.16);
@@ -172,7 +219,7 @@ export function createWorld(scene,seed){
   const ground=new THREE.Mesh(geo,new THREE.MeshLambertMaterial({vertexColors:true,map:grain}));
   ground.receiveShadow=true;ground.castShadow=true;scene.add(ground);
   // mer : shader avec la profondeur réelle (sable clair -> turquoise -> bleu profond), vagues, écume au rivage, reflets du soleil
-  const DS=256,dd=new Uint8Array(DS*DS*4);
+  const DS=512,dd=new Uint8Array(DS*DS*4);
   for(let j=0;j<DS;j++)for(let i=0;i<DS;i++){
     const h=hAt(-200+(i+.5)*400/DS,-200+(j+.5)*400/DS),k=(j*DS+i)*4;
     dd[k]=clamp(-h/4,0,1)*255;dd[k+3]=255;
@@ -189,24 +236,38 @@ void main(){vec4 w=modelMatrix*vec4(position,1.);vW=w.xyz;vec4 mvPosition=viewMa
 }`,
     fragmentShader:`uniform sampler2D depthTex;uniform float time;uniform vec3 sunDir;uniform vec3 sunCol;varying vec3 vW;
 #include <fog_pars_fragment>
-float h21(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
-float n2(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x),f.y);}
-float waves(vec2 p){return n2(p*.35+vec2(time*.25,time*.18))*.5+n2(p*.9-vec2(time*.31,-time*.22))*.3+n2(p*2.3+vec2(-time*.6,time*.45))*.2;}
+${WATER_GLSL}
+float waves(vec2 p){
+  return n2(p*.18+vec2(time*.12,time*.07))*.45+n2(p*.45-vec2(time*.2,-time*.15))*.3
+        +n2(p*1.1+vec2(-time*.45,time*.33))*.17+n2(p*2.6+vec2(time*.8,time*.6))*.08;
+}
 void main(){
+  float dist=length(cameraPosition-vW);
   float d=texture2D(depthTex,(vW.xz+200.)/400.).r;
-  vec2 p=vW.xz;float e=.15,h0=waves(p);
-  vec3 n=normalize(vec3((h0-waves(p+vec2(e,0.)))*1.6,1.,(h0-waves(p+vec2(0.,e)))*1.6));
+  vec2 p=vW.xz;float e=.2,h0=waves(p);
+  float k=mix(2.4,.45,smoothstep(25.,320.,dist)); // vagues plus douces au loin : pas de scintillement
+  vec3 n=normalize(vec3((h0-waves(p+vec2(e,0.)))*k,1.,(h0-waves(p+vec2(0.,e)))*k));
   vec3 V=normalize(cameraPosition-vW);
-  float fres=pow(1.-max(dot(n,V),0.),4.);
-  vec3 col=mix(vec3(.45,.9,.78),vec3(.02,.62,.66),smoothstep(0.,.35,d));
-  col=mix(col,vec3(.004,.06,.2),smoothstep(.35,.95,d));
-  col=mix(col,vec3(.45,.62,.85),fres*.6);
-  vec3 R=reflect(-V,n);float rs=max(dot(R,sunDir),0.);
-  col+=sunCol*(pow(rs,220.)*6.+pow(rs,18.)*.25);
-  float foam=smoothstep(.07,0.,d)*(.55+.45*n2(p*1.5+time*.6))+smoothstep(.12,.06,d)*step(.72,n2(p*2.+vec2(time*.4,0.)))*.5;
-  foam=clamp(foam,0.,1.);
+  float fres=.02+.98*pow(1.-max(dot(n,V),0.),5.);
+  // couleur de l'eau selon la profondeur, lumière qui traverse les crêtes
+  vec3 body=mix(vec3(.35,.85,.72),vec3(0.,.55,.6),smoothstep(0.,.3,d));
+  body=mix(body,vec3(.002,.05,.17),smoothstep(.3,.9,d));
+  body+=vec3(0.,.25,.2)*smoothstep(.55,.8,h0)*(1.-smoothstep(.3,.9,d))*.6;
+  // caustiques : réseau lumineux mouvant sur les hauts-fonds
+  vec2 cp=p*.6;float c1=1.-abs(n2(cp+time*.3)*2.-1.),c2=1.-abs(n2(cp*1.7-time*.25+5.)*2.-1.);
+  float caus=pow(c1*c2,6.)*1.6*(1.-smoothstep(.05,.35,d));
+  body+=vec3(.9,1.,.9)*caus;
+  // reflet du ciel (dégradé du coucher de soleil) et éclat du soleil
+  vec3 R=reflect(-V,n);R.y=abs(R.y);
+  vec3 col=mix(body,skyCol(R),fres);
+  float rs=max(dot(R,sunDir),0.);
+  col+=sunCol*(pow(rs,300.)*8.+pow(rs,25.)*.3);
+  // ressac : lignes d'écume qui avancent vers la plage
+  float shore=1.-smoothstep(0.,.16,d);
+  float bands=smoothstep(.55,1.,sin(d*55.-time*1.8+n2(p*.3)*6.)*.5+.5)*shore;
+  float foam=clamp(smoothstep(.05,0.,d)*(.6+.4*n2(p*1.6+time*.5))+bands*(.35+.65*n2(p*1.2-time*.3))*.8,0.,1.);
   col=mix(col,vec3(1.),foam);
-  float a=max(max(mix(.45,.93,smoothstep(0.,.5,d)),foam),fres*.8);
+  float a=max(max(max(mix(.35,.95,smoothstep(0.,.45,d)),fres),foam),caus*.5);
   gl_FragColor=vec4(col,a);
 #include <tonemapping_fragment>
 #include <colorspace_fragment>
@@ -224,53 +285,60 @@ void main(){
   {const x=mc.getContext('2d'),g=x.createRadialGradient(32,32,2,32,32,31);g.addColorStop(0,'rgba(255,250,240,.9)');g.addColorStop(1,'rgba(255,250,240,0)');x.fillStyle=g;x.fillRect(0,0,64,64)}
   const mistTex=new THREE.CanvasTexture(mc);
   const mist=(x,y,z,s,o)=>{const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:mistTex,transparent:true,opacity:o,depthWrite:false}));sp.position.set(x,y,z);sp.scale.set(s,s*.6,1);scene.add(sp)};
-  // rivières et cascades : rubans animés qui suivent la pente jusqu'à la mer
-  const sc2=document.createElement('canvas');sc2.width=64;sc2.height=128;
-  {
-    const x=sc2.getContext('2d'),sr=mulberry32(seed^0x7f4a);
-    x.fillStyle='rgba(255,255,255,.55)';x.fillRect(0,0,64,128);
-    for(let i=0;i<70;i++){x.fillStyle=`rgba(255,255,255,${.25+sr()*.6})`;x.fillRect(sr()*64,sr()*128,1+sr()*2.5,10+sr()*40)}
-  }
-  const streakTex=new THREE.CanvasTexture(sc2);streakTex.wrapS=streakTex.wrapT=THREE.RepeatWrapping;
-  const riverMat=new THREE.MeshBasicMaterial({map:streakTex,vertexColors:true,transparent:true,opacity:.88,depthWrite:false,side:THREE.DoubleSide,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2});
+  // rivières : surface d'eau posée dans le lit creusé, courant animé, eaux vives et cascades dans les pentes
+  const riverMat=new THREE.ShaderMaterial({
+    uniforms:THREE.UniformsUtils.merge([THREE.UniformsLib.fog,{time:{value:0},sunDir:{value:SUN_DIR},sunCol:{value:new THREE.Color(1,.72,.42)}}]),
+    transparent:true,depthWrite:false,fog:true,side:THREE.DoubleSide,
+    vertexShader:`attribute float aSlope;varying vec2 vUv;varying float vSlope;varying vec3 vW;
+#include <fog_pars_vertex>
+void main(){vUv=uv;vSlope=aSlope;vec4 w=modelMatrix*vec4(position,1.);vW=w.xyz;vec4 mvPosition=viewMatrix*w;gl_Position=projectionMatrix*mvPosition;
+#include <fog_vertex>
+}`,
+    fragmentShader:`uniform float time;uniform vec3 sunDir;uniform vec3 sunCol;varying vec2 vUv;varying float vSlope;varying vec3 vW;
+#include <fog_pars_fragment>
+${WATER_GLSL}
+void main(){
+  float sl=clamp(vSlope,0.,1.),speed=1.+sl*5.;
+  vec2 q=vec2(vUv.x*2.5,vUv.y);
+  float a1=n2(vec2(q.x*2.,q.y*.9-time*speed*.9)),a2=n2(vec2(q.x*5.+7.,q.y*2.2-time*speed*1.3)),a3=n2(vec2(q.x*11.+3.,q.y*5.-time*speed*1.8));
+  float hh=a1*.55+a2*.3+a3*.15;
+  vec3 n=normalize(vec3((a2-.5)*.5,1.,(a1-.5)*.5+(a3-.5)*.3));
+  vec3 V=normalize(cameraPosition-vW);
+  float fres=.02+.98*pow(1.-max(dot(n,V),0.),5.);
+  float edge=min(vUv.x,1.-vUv.x);
+  vec3 body=mix(vec3(.12,.42,.36),vec3(.02,.2,.2),smoothstep(.05,.45,edge));
+  vec3 R=reflect(-V,n);R.y=abs(R.y);
+  vec3 col=mix(body,skyCol(R),fres*.8);
+  col+=sunCol*pow(max(dot(R,sunDir),0.),200.)*5.;
+  float white=clamp(smoothstep(.1,.4,sl)*(.55+.45*a2)+smoothstep(.62,.8,hh)*(.25+sl)+smoothstep(.12,0.,edge)*.35*(.5+a3),0.,1.);
+  col=mix(col,vec3(.95,.98,1.),white);
+  gl_FragColor=vec4(col,smoothstep(0.,.08,edge)*mix(.82,.97,white));
+#include <tonemapping_fragment>
+#include <colorspace_fragment>
+#include <fog_fragment>
+}`
+  });
   const clearR=[];
-  function buildRiver(x0,z0){
-    const pts=[];let x=x0,z=z0,dx=0,dz=0;
-    for(let s=0;s<320;s++){
-      const e=1.5,gx=(hAt(x+e,z)-hAt(x-e,z))/(2*e),gz=(hAt(x,z+e)-hAt(x,z-e))/(2*e),gl=Math.hypot(gx,gz);
-      if(gl<.004)break;
-      dx=dx*.7-gx/gl*.3;dz=dz*.7-gz/gl*.3;const dl=Math.hypot(dx,dz)||1;dx/=dl;dz/=dl;
-      x+=dx*2.2;z+=dz*2.2;
-      const h=hAt(x,z);pts.push({x,z,slope:gl});
-      if(h<.35||Math.hypot(x,z)>200)break;
-    }
-    if(pts.length<14)return;
-    const P2=[],C2=[],U2=[],I2=[];let len=0;const tc=new THREE.Color(),tw=new THREE.Color(0xffffff),tt=new THREE.Color(0x5fcfe0);
+  for(const pts of rivers){
+    const P2=[],U2=[],S2=[],I2=[];let len=0;
     pts.forEach((p,i)=>{
       const a=pts[Math.max(0,i-1)],b=pts[Math.min(pts.length-1,i+1)];
       let tx=b.x-a.x,tz=b.z-a.z;const tl=Math.hypot(tx,tz)||1;tx/=tl;tz/=tl;
-      const w=.9+i/pts.length*1.6;
+      const w=p.w+1.5; // la surface dépasse un peu sous les berges, pour ne pas laisser de bord visible
       if(i>0)len+=Math.hypot(p.x-pts[i-1].x,p.z-pts[i-1].z);
       for(const sd of[-1,1]){
         const vx=p.x-tz*w*sd,vz=p.z+tx*w*sd;
-        P2.push(vx,hAt(vx,vz)+.2,vz);
-        tc.copy(tt).lerp(tw,clamp((p.slope-.12)/.25,0,1));C2.push(tc.r,tc.g,tc.b);
-        U2.push(sd<0?0:1,len/5);
+        P2.push(vx,Math.min(p.lv,hAt(vx,vz)+.05),vz);U2.push(sd<0?0:1,len/6);S2.push(clamp((p.slope-.08)*1.6,0,1));
       }
       if(i>0){const k=i*2;I2.push(k-2,k-1,k,k-1,k+1,k)}
-      clearR.push({x:p.x,z:p.z,r:3});
-      if(p.slope>.3&&i%3===0)mist(p.x,hAt(p.x,p.z)+2.5,p.z,9,.35);
+      clearR.push({x:p.x,z:p.z,r:p.w+2.5});
+      if(p.slope>.3&&i%3===0)mist(p.x,p.lv+2,p.z,9,.35);
     });
     const g=new THREE.BufferGeometry();
-    g.setAttribute('position',new THREE.Float32BufferAttribute(P2,3));g.setAttribute('color',new THREE.Float32BufferAttribute(C2,3));g.setAttribute('uv',new THREE.Float32BufferAttribute(U2,2));
+    g.setAttribute('position',new THREE.Float32BufferAttribute(P2,3));g.setAttribute('uv',new THREE.Float32BufferAttribute(U2,2));g.setAttribute('aSlope',new THREE.Float32BufferAttribute(S2,1));
     g.setIndex(I2);
-    const m=new THREE.Mesh(g,riverMat);m.frustumCulled=false;scene.add(m);
+    const m=new THREE.Mesh(g,riverMat);m.frustumCulled=false;m.renderOrder=2;scene.add(m);
     const e=pts[pts.length-1];mist(e.x,1.4,e.z,14,.3);
-  }
-  {
-    const tops=[];
-    for(const p of cand)if(p.h>9&&!caveList.some(q=>Math.hypot(q.x-p.x,q.z-p.z)<30)&&tops.every(q=>Math.hypot(q.x-p.x,q.z-p.z)>70)){tops.push(p);if(tops.length>=3)break}
-    for(const p of tops)buildRiver(p.x,p.z);
   }
   // brume basse au-dessus de la canopée
   for(let a=0,n=0;a<400&&n<34;a++){
@@ -377,7 +445,7 @@ void main(){
   }
 
   const occ=new Set();let treeN=0;
-  const PT={forest:.75,snow:.4,swamp:.3,desert:.025,rock:.03,beach:.25,water:0};
+  const PT={forest:.75,snow:.7,swamp:.3,desert:.12,rock:.3,beach:.25,water:0};
   for(let a=0;a<34000&&treeN<3600;a++){
     const x=(rng()-.5)*380,z=(rng()-.5)*380;const h=hAt(x,z);
     if(h<.35)continue;
@@ -386,10 +454,12 @@ void main(){
     if(nearCave(x,z)||inClear(x,z))continue;
     const k=Math.round(x/2.4)+','+Math.round(z/2.4);
     if(occ.has(k))continue;occ.add(k);
-    const style=b==='snow'?'pine':b==='desert'?'palm':b==='swamp'?'dead':b==='beach'?'palm':h<3.2?(rng()<.5?'palm':'oak'):h>9?(rng()<.7?'pine':'oak'):(rng()<.85?'oak':'pine');
+    // île tropicale : palmiers sur la côte, jungle de feuillus partout ailleurs, quelques conifères seulement près des sommets
+    const r=rng();
+    const style=b==='desert'||b==='beach'?'palm':b==='swamp'?'dead':h<4?(r<.6?'palm':'oak'):h>14?(r<.3?'pine':'oak'):(r<.15?'palm':'oak');
     addItem('tree',style,x,h,z,.8+rng()*.6,style==='palm'?.4:.55);treeN++;
   }
-  for(let a=0,n=0;a<1500&&n<6;a++){ // arbres géants de la jungle
+  for(let a=0,n=0;a<2500&&n<14;a++){ // arbres géants de la jungle
     const x=(rng()-.5)*300,z=(rng()-.5)*300,h=hAt(x,z);
     if(h<2||h>8||biomeAt(x,z,seed)!=='forest'||nearCave(x,z)||inClear(x,z))continue;
     addItem('tree','giant',x,h,z,1,2.2);clearR.push({x,z,r:5});n++;
@@ -471,7 +541,7 @@ void main(){
     bm.instanceMatrix.needsUpdate=true;if(bm.instanceColor)bm.instanceColor.needsUpdate=true;bm.frustumCulled=false;bm.castShadow=bm.receiveShadow=true;scene.add(bm);
   }
   W.struct.traverse(o=>{if(o.isMesh)o.castShadow=o.receiveShadow=true});
-  W.tick=dt=>{seaMat.uniforms.time.value+=dt;streakTex.offset.y-=dt*1.1};
+  W.tick=dt=>{seaMat.uniforms.time.value+=dt;riverMat.uniforms.time.value+=dt};
   W.removeNode=nid=>{const n=W.nodeMap.get(nid);if(!n||!n.alive)return null;n.alive=false;for(const p of n.parts){p.m.setMatrixAt(p.i,Z);p.m.instanceMatrix.needsUpdate=true}return n};
   W.nearNodes=(x,z,rad,fn)=>{
     const x0=Math.floor((x-rad)/8),x1=Math.floor((x+rad)/8),z0=Math.floor((z-rad)/8),z1=Math.floor((z+rad)/8);

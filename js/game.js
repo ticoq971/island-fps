@@ -96,7 +96,8 @@ function autoQuality(dt){
   perf.t+=dt;perf.n++;
   if(perf.t<5)return;
   const fps=perf.n/perf.t;perf.t=perf.n=0;
-  perf.slow=fps<22?perf.slow+1:0;
+  // sous 4 i/s c'est le navigateur qui met l'onglet en veille (fenêtre cachée), pas le jeu qui rame
+  perf.slow=fps<22&&fps>4&&!document.hidden?perf.slow+1:0;
   if(perf.slow>=2&&quality!=='low'){perf.slow=0;applyQuality(quality==='high'?'medium':'low');showBanner('Graphismes abaissés à « '+QUAL[quality].name+' » pour plus de fluidité',2500)}
 }
 // ciel : dégradé zénith bleu -> horizon pêche, halo autour du soleil
@@ -380,8 +381,7 @@ function toggleView(){
   showBanner(third?'Vue à la 3ᵉ personne':'Vue à la 1ʳᵉ personne',1000);
 }
 // caméra libre (C ou croix bas) : on vole librement pour regarder l'île, le joueur reste sur place
-let free=false;const fc={pos:new THREE.Vector3(),yaw:0,pitch:0};
-function toggleFree(){
+let free=false;const fc={pos:new THREE.Vector3(),yaw:0,pitch:0};function toggleFree(){
   free=!free;
   if(free){
     fc.pos.copy(camera.position);fc.yaw=me.yaw;fc.pitch=me.pitch;mouseDown=false;
